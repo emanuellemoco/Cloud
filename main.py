@@ -1,11 +1,15 @@
 import sys
 import boto3
-
+import time
 
 ec2_e1 = boto3.client('ec2', region_name='us-east-1')
 ec2_e2 = boto3.client('ec2', region_name='us-east-2')
 
-AMI_ID_ubuntu_20 = 'ami-0dba2cb6798deb6d8'
+
+ubuntu_AMI_name = 'ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-20200907'
+
+#devemos usar o dry run?????
+
 
 # checar e matar todas as instancias e configuracoes 
 # com try e except caso não exista
@@ -43,24 +47,15 @@ def createSecurityGroup(ec2, name):
                 },
             ]
         )
-        print("Security Group criado")
+        print("Security Group {} criado".format(name))
         return(security_group['GroupId'])
     except:
-        print("Security Group já existe")
-        print("Deletando Security Group")
+        print("Deletando Security Group já existente")
         response = ec2.delete_security_group(
         GroupName=name
         )
-        createSecurityGroup(ec2_e2, 'securityGroupManu2')
+        return createSecurityGroup(ec2_e2, name)
 
-    
-
-
-createSecurityGroup(ec2_e2, 'securityGroupManu2')
-
-
-
-ubuntu_AMI_name = 'ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-20200907'
 
 def getAMIid(ec2, name):
 
@@ -72,17 +67,13 @@ def getAMIid(ec2, name):
             },
         ],
     )
-
     return response['Images'][0]['ImageId']
 
-#print(getAMIid(ec2_e2, ubuntu_AMI_name))
 
 
 
-
-
-def createInstance(ami_id, ec2):
-    print("Criando instância")
+def createInstance(ami_id, ec2, instanceName, securityGroupID):
+    print("Criando instância {}".format(instanceName))
 
     response = ec2.run_instances(
         ImageId=ami_id,
@@ -99,7 +90,7 @@ def createInstance(ami_id, ec2):
                 'Tags': [
                     {
                         'Key': 'Name',
-                        'Value': 'nomeTeste'
+                        'Value': instanceName
                     },
                     {
                         'Key': 'Creator',
@@ -108,6 +99,66 @@ def createInstance(ami_id, ec2):
                 ]
             },
         ],
-    )
 
-#createInstance(AMI_ID_ubuntu_20, ec2_e1)
+        # SecurityGroupIds=[
+        #     securityGroupID,
+        # ],
+    )
+    return (response["Instances"][0]['InstanceId'])
+
+
+def terminateInstances(ec2):
+    ### checar se o state é terminated
+
+    response = ec2.describe_instances()
+    #print(response["Reservations"][0]["Instances"][0]["InstanceId"])
+    for reservation in response["Reservations"]:
+        #print(reservation["Instances"])
+   
+        for intance in reservation["Instances"]:
+            #print(intance["State"])
+            if(intance["State"]["Name"] != "terminated"): 
+                for tags in intance["Tags"]:
+                    if (tags["Key"] == "Creator"):
+                        if (tags["Value"] == "manu"):
+                            print("Instance terminated")
+                            instanceId = (intance["InstanceId"])
+                            response = ec2.terminate_instances(InstanceIds=[instanceId])
+
+
+def createImage(ec2, instanceId, name):
+    try:
+        response = ec2.create_image(
+            InstanceId=instanceId,
+            Name=name,
+            NoReboot=True
+        )
+        print("AMI created")
+    except:
+        print("Unregistering existing AMI") 
+        imageId= getAMIid(ec2_e1, name)
+        response = ec2.deregister_image(ImageId=imageId)
+        return createImage(ec2, instanceId, name)
+
+
+
+def espera(ec2, instanceId):
+    waiter = ec2.get_waiter('instance_running')
+    waiter.wait(InstanceIds=[instanceId])
+
+
+
+
+
+terminateInstances(ec2_e1)
+
+AMI_ID_ubuntu_20 = (getAMIid(ec2_e1, ubuntu_AMI_name))
+
+securityGroupID = (createSecurityGroup(ec2_e1, 'securityGroupManu'))
+
+instanceId = createInstance(AMI_ID_ubuntu_20, ec2_e1, 'OLAR ', securityGroupID)
+
+espera(ec2_e1, instanceId)
+
+createImage(ec2_e1, instanceId, 'IMAGEMMMMMM' )
+
