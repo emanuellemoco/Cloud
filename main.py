@@ -2,11 +2,16 @@ import sys
 import boto3
 import time
 
+from scripts import *
+
 ec2_e1 = boto3.client('ec2', region_name='us-east-1')
 ec2_e2 = boto3.client('ec2', region_name='us-east-2')
 
-elb_e1 = boto3.client('elbv2', region_name='us-east-1')
-elb_e2 = boto3.client('elbv2', region_name='us-east-2')
+elb_e1 = boto3.client('elb', region_name='us-east-1')
+elb_e2 = boto3.client('elb', region_name='us-east-2')
+
+as_e1 = boto3.client('autoscaling', region_name='us-east-1')
+as_e2 = boto3.client('autoscaling', region_name='us-east-2')
 
 
 
@@ -96,7 +101,7 @@ def updateSecurityGroupRules(ec2, groupId):
 
 
 
-def createInstance(ami_id, ec2, instanceName, securityGroupID):
+def createInstance(ami_id, ec2, instanceName, securityGroupID, UserData):
     print("Criando instância {}".format(instanceName))
 
     response = ec2.run_instances(
@@ -107,7 +112,7 @@ def createInstance(ami_id, ec2, instanceName, securityGroupID):
         Monitoring={
             'Enabled': True
         },
-    
+        UserData=UserData,
         TagSpecifications=[
             {
                 'ResourceType': 'instance',
@@ -178,85 +183,72 @@ def getAMIid(ec2, name):
         print("Imagem not found")
 
 
-def getLoadBalancerArn(elb, name):
-    response = elb.describe_load_balancers()
-    for lb in response["LoadBalancers"]:
-        if (lb["LoadBalancerName"]==name):
-            LoadBalancerArn = lb["LoadBalancerArn"]
-            deleteLoadBalancer(elb, LoadBalancerArn)
+def deleteLoadBalancer(elb, name):
+    print("Deleting existed LoadBalancer")
+    response = elb.delete_load_balancer(LoadBalancerName=name)
 
+def createLoadBalancer(elb, name, instPort, lbPort, subnets, SecurityGroups):
+    try:
+        print("Creating load balancer")
+        response = elb.create_load_balancer(
+            LoadBalancerName=name,
+            Listeners=[
+                {
+                    'Protocol': 'HTTP',
+                    'LoadBalancerPort': lbPort,
+                    'InstancePort': instPort,
+                },
+            ],
+            Subnets=subnets,
+            # SecurityGroups=[
+            #     SecurityGroups,
+            # ],
+            Tags=[
+                {
+                    'Key': 'Creator',
+                    'Value': 'manu'
+                },
+            ]
+        )
+    except: 
+        print("ja existe")
+        deleteLoadBalancer(elb, name)
+        createLoadBalancer(elb, name, instPort, lbPort, subnets, SecurityGroups)
 
-def createLoadBalancer(elb, name, port, subnets, securityGroupID):
-    #Check if there is a LB with the same name and delete it 
-    getLoadBalancerArn(elb_e1, name)
+def createAutoScaling(auto, name, InstanceId, lbName):
+    try:
+        response = auto.create_auto_scaling_group(
+        AutoScalingGroupName=name,
+        InstanceId=InstanceId,
+        MinSize=1,
+        MaxSize=2,
+        # AvailabilityZones=[
+        #     'string',
+        # ],
+        LoadBalancerNames=[lbName],
 
-    response = elb.create_load_balancer(
-        Name=name,
-        # SecurityGroups=[securityGroupID],
         Tags=[
             {
                 'Key': 'Creator',
-                'Value': 'manu'
+                'Value': 'manu',
             },
         ],
-        Subnets=subnets,
-    )
-    print("LoadBalancer {} created".format(name))
-    return(response["LoadBalancers"][0]["LoadBalancerArn"])
+        )
+        print("AutoScaling group {} created".format(name))
+    except:
+        print("ja existe")
+        deleteAutoScaling(auto, name)
+        print("aa")
+        createAutoScaling(auto, name, InstanceId, lbName)
+        print("bb")
 
 
-def deleteLoadBalancer(elb, LoadBalancerArn):
-    print("Deleting existed LoadBalancer")
-    response = elb.delete_load_balancer(LoadBalancerArn=LoadBalancerArn)
-
-
-#criar e registrar target group
-
-def getVpcId(ec2):
-    response = ec2.describe_vpcs()
-    for vpc in response["Vpcs"]:
-        return vpc["VpcId"]
-    
-def getTargetGroupArn(elb, name):
-    response = elb.describe_target_groups()
-    print("___________")
-    print(response)
-    print("___________")
-    for tg in response["TargetGroups"]:
-        if (tg["TargetGroupName"]==name):
-            print("ja existe")
-            TargetGroupArn = tg["TargetGroupArn"]
-            deleteTargetGroup(elb, TargetGroupArn)
-
-def createTargetGroup(elb, port, name):
-    #Check if the TG already exists and delete it
-    getTargetGroupArn(elb, name)
-
-    print("Creating TargetGroup")
-    VpcId = getVpcId(ec2_e1)
-
-    response = elb.create_target_group(
-    Name=name,
-    Protocol='HTTP',
-    Port=port,
-    VpcId=VpcId,
-    TargetType='instance',
-    Tags=[
-        {
-            'Key': 'Creator',
-            'Value': 'manuuu'
-        },
-    ]
-)
-
-
-def deleteTargetGroup(elb, TargetGroupArn):
-    print("Deleting existed TargetGroup")
-    response = elb.delete_target_group(TargetGroupArn=TargetGroupArn)
-
-
-
-createTargetGroup(elb_e1, 8080, 'TargetGroupManu')
+def deleteAutoScaling(auto, name):
+    print("deletando")
+    response = auto.delete_auto_scaling_group(
+        AutoScalingGroupName=name, ForceDelete=True)
+    response = auto.delete_launch_configuration(
+        LaunchConfigurationName=name)
 
 
 
@@ -265,6 +257,7 @@ def waiterInstance(ec2, instanceId):
     waiter = ec2.get_waiter('instance_running')
     waiter.wait(InstanceIds=[instanceId])
 
+#Nao funcionaaa e nem o waiter do autoscalling
 def waiterSecurityGroup(ec2, groupId):
     waiter = ec2.get_waiter('security_group_exists')
     waiter.wait(GroupIds=[groupId])
@@ -274,21 +267,23 @@ def waiterImage(ec2, imageId):
     waiter.wait(ImageIds=[imageId])
 
 
+
+
 # _________________________________TESTE INSTANCIAS________________________
-# # Terminate all instances
+# # Terminate all my instances
 # terminateInstances(ec2_e1)
 
 # # Getting ubuntu_20 AMI id 
 # AMI_ID_ubuntu_20 = (getAMIid(ec2_e1, ubuntu_AMI_name))
 
-# Creating a Security Group
+# # # Creating a Security Group
 # securityGroupID = (createSecurityGroup(ec2_e1, 'securityGroupManu'))
-# waiterSecurityGroup(ec2_e1, securityGroupID)         
 # time.sleep(6)
 
 # # Creating an instance 
-# instanceId = createInstance(AMI_ID_ubuntu_20, ec2_e1, 'OLAR ', securityGroupID)
+# instanceId = createInstance(AMI_ID_ubuntu_20, ec2_e1, 'manuP ', 'sg', postgres_script)
 # waiterInstance(ec2_e1, instanceId)
+
 
 # # Update the Security Group Rules
 # updateSecurityGroupRules(ec2_e1, securityGroupID)
@@ -303,12 +298,25 @@ def waiterImage(ec2, imageId):
 # #cria uam instancia com essa imagem
 # createInstance(ImageIdTESTE, ec2_e1, 'outra ', securityGroupID)
 
+print("INICIO")
+
 # Creating load balancer
-# loadBalancerArn = createLoadBalancer(elb_e1, 'lbManu', 80, subnets_e1, 'a' ) 
+# createLoadBalancer(elb_e1, 'lbManu', 80, 90, subnets_e1, 'sg' )
+
+# createAutoScaling(as_e1, 'AutoScalingManu', 'i-09572702c08b20285', 'lbManu')
+
+# createAutoScaling(as_e1, 'AutoScalingManu', instanceId, 'lbManu')
+
+
 
 # _________________________________________________________________________
 
 
+
+# print("FIM DOS TESTES")
+# terminateInstances(ec2_e1)
+# deleteAutoScaling(as_e1, 'AutoScalingManu') #da erro se nao existe mas tudo bem (nao vou usar isso)
+# deleteLoadBalancer(elb_e1, 'lbManu')
 
 
 print("FIM TESTE")
