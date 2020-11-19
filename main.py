@@ -20,40 +20,15 @@ ubuntu_AMI_20 = 'ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-20200907'
 ubuntu_AMI_name = 'ubuntu/images/hvm-ssd/ubuntu-bionic-18.04-amd64-server-20201026'
 
 
-
-
-#devemos usar o dry run?????
-
-
-#Criar o django e sua imagem para o autoscalling
-
-#Criar e configurar o postgress (DB)
-
-#creteInstance
-#argumento userdata tem que seer string
-#o que passar ele roda na inicializacao (nao precisa de ssh)
-
-# pega uma maquina limpa, tenta o script na mao, linha a linha
-# user data nao roda no home, roda no /
-
-# procurar postgress
-# como criar usuario sem o prompt 
-#https://stackoverflow.com/questions/18715345/how-to-create-a-user-for-postgres-from-the-command-line-for-bash-automation
-
-
 def getSubnets(ec2):
     subnets = []
     sn_all = ec2.describe_subnets()
     for sn in sn_all['Subnets'] :
         subnets.append(sn['SubnetId'])
-    
     return subnets
         
-
 subnets_e1 = getSubnets(ec2_e1)
 subnets_e2 = getSubnets(ec2_e2)
-
-
 
 def createSecurityGroup(ec2, name):
     try: 
@@ -75,16 +50,31 @@ def createSecurityGroup(ec2, name):
         print("Security Group {} created".format(name))
         return(security_group['GroupId'])
     except:
+        deleteSecurityGroup(ec2, name)
+        # print("Deletando sg que ja existe")
+        # response = ec2.delete_security_group(
+        # GroupName=name
+        # )
+        # time.sleep(10)
+        return createSecurityGroup(ec2, name)
+
+
+def deleteSecurityGroup(ec2, name):
+    try:
         print("Deletando sg que ja existe")
         response = ec2.delete_security_group(
         GroupName=name
         )
         time.sleep(10)
-        return createSecurityGroup(ec2_e2, name)
+    except:
+        print("nada")
 
-def updateSecurityGroupRules(ec2, groupId, port):
+
+
+
+def updateSecurityGroupRules(ec2, groupName, port):
     response = ec2.authorize_security_group_ingress(
-        GroupId=groupId,
+        GroupName=groupName,
         IpPermissions=[
             {
                 'FromPort': port,
@@ -99,8 +89,6 @@ def updateSecurityGroupRules(ec2, groupId, port):
         ]
     )
     print("Security Group rules updated")
-
-
 
 
 def createInstance(ami_id, ec2, instanceName, securityGroupID, UserData):
@@ -146,14 +134,9 @@ def getPublicIpAddress(ec2, InstanceId):
             if intance['InstanceId'] == InstanceId:
                 return (intance['PublicIpAddress'])
 
-
-
-
 def terminateInstances(ec2):
     response = ec2.describe_instances()
-    for reservation in response["Reservations"]:
-        #print(reservation["Instances"])
-   
+    for reservation in response["Reservations"]:   
         for intance in reservation["Instances"]:
             if(intance["State"]["Name"] != "terminated"): 
                 for tags in intance["Tags"]:
@@ -164,8 +147,7 @@ def terminateInstances(ec2):
                             response = ec2.terminate_instances(InstanceIds=[instanceId])
                             waiter = ec2.get_waiter('instance_terminated')
                             waiter.wait(InstanceIds=[instanceId])
-
-
+                            
 
 def createImage(ec2, instanceId, name):
     try:
@@ -196,7 +178,7 @@ def getAMIid(ec2, name):
         )
         return response['Images'][0]['ImageId']
     except:
-        print("Imagem not found")
+        print("Image not found")
 
 
 def deleteLoadBalancer(elb, name):
@@ -207,7 +189,7 @@ def deleteLoadBalancer(elb, name):
         print("\n")
 
 def createLoadBalancer(elb, name, instPort, lbPort, subnets, SecurityGroup):
-    try:
+    # try:
         print("Creating load balancer")
         response = elb.create_load_balancer(
             LoadBalancerName=name,
@@ -227,10 +209,11 @@ def createLoadBalancer(elb, name, instPort, lbPort, subnets, SecurityGroup):
                 },
             ]
         )
-    except: 
-        print("ja existe")
-        deleteLoadBalancer(elb, name)
-        createLoadBalancer(elb, name, instPort, lbPort, subnets, SecurityGroup)
+    # except: 
+    #     print("ja existe")
+    #     deleteLoadBalancer(elb, name)
+    #     time.sleep(10)
+    #     createLoadBalancer(elb, name, instPort, lbPort, subnets, SecurityGroup)
 
 def createAutoScaling(auto, name, InstanceId, lbName):
     try:
@@ -239,9 +222,6 @@ def createAutoScaling(auto, name, InstanceId, lbName):
         InstanceId=InstanceId,
         MinSize=1,
         MaxSize=2,
-        # AvailabilityZones=[
-        #     'string',
-        # ],
         LoadBalancerNames=[lbName],
 
         Tags=[
@@ -258,27 +238,29 @@ def createAutoScaling(auto, name, InstanceId, lbName):
 
 
 def deleteAutoScaling(auto, name):
-    print("deletando")
-    response = auto.delete_auto_scaling_group(
-        AutoScalingGroupName=name, ForceDelete=True)
-    response = auto.delete_launch_configuration(
-        LaunchConfigurationName=name)
+    try:
+        print("deletando")
+        response = auto.delete_auto_scaling_group(
+            AutoScalingGroupName=name, ForceDelete=True)
+        response = auto.delete_launch_configuration(
+            LaunchConfigurationName=name)
+    except:
+        print("nada")
 
 
 
+
+
+def delete_launch_configuration(auto, name):
+    response = auto.describe_launch_configurations()
+    for lc in response["LaunchConfigurations"]:
+        if lc["LaunchConfigurationName"] == name:
+            response = auto.delete_launch_configuration(
+            LaunchConfigurationName=name)
 
 def waiterInstance(ec2, instanceId):
     waiter = ec2.get_waiter('instance_status_ok')
     waiter.wait(InstanceIds=[instanceId])
-
-#FAZER UM WAITER DE INSTANCE TERMINATED DEPOIS DE KILLAR E ANTES DE CRIAR O SCURUTY GROU
-
-
-
-#Nao funcionaaa e nem o waiter do autoscalling
-def waiterSecurityGroup(ec2, groupId):
-    waiter = ec2.get_waiter('security_group_exists')
-    waiter.wait(GroupIds=[groupId])
 
 def waiterImage(ec2, imageId):
     waiter = ec2.get_waiter('image_available')
@@ -290,83 +272,75 @@ def waiterImage(ec2, imageId):
 
 # _________________________________TESTE INSTANCIAS________________________
 
-# # # Creating a Security Group
-# securityGroupID = (createSecurityGroup(ec2_e1, 'securityGroupManu'))
-# time.sleep(6)
-
-# # Creating an instance 
-# instanceId = createInstance(AMI_ID_ubuntu_20, ec2_e1, 'manuP ', 'sg', postgres_script)
-# waiterInstance(ec2_e1, instanceId)
-
-
-# # Update the Security Group Rules
-# updateSecurityGroupRules(ec2_e1, securityGroupID)
-
-# # Creating image from an Instance
-# ImageIdTESTE = createImage(ec2_e1, instanceId, 'IMAGEMmanu' )
-
-# # time.sleep(10)
-# waiterImage(ec2_e1, ImageIdTESTE) 
-
-
-# #cria uam instancia com essa imagem
-# createInstance(ImageIdTESTE, ec2_e1, 'outra ', securityGroupID)
-
-
-# Creating load balancer
-# createLoadBalancer(elb_e1, 'lbManu', 80, 90, subnets_e1, 'sg' )
-
-# createAutoScaling(as_e1, 'AutoScalingManu', 'i-09572702c08b20285', 'lbManu')
-
-# createAutoScaling(as_e1, 'AutoScalingManu', instanceId, 'lbManu')
-
-
-
-
-
 
 # Terminate all my instances
+print("___INICIO___")
 terminateInstances(ec2_e1)
+terminateInstances(ec2_e2)
+deleteAutoScaling(as_e1, 'AutoScalingManu')
 deleteLoadBalancer(elb_e1, 'lbManu')
+delete_launch_configuration(as_e1, "AutoScalingManu")
+time.sleep(10)
+print("_____1")
+deleteSecurityGroup(ec2_e1, 'sgManu1')
+print("_____2")
+deleteSecurityGroup(ec2_e2, 'sgManu2')
+
+time.sleep(10)
+#delete security grooup
+
+
+print("___INICIO___")
+# Creating a Security Group
+print("Criando security group e2")
+postgres_SGroupID = (createSecurityGroup(ec2_e2, 'sgManu2'))
+print("___")
+print("Criando security group e1")
+django_SGroupID = (createSecurityGroup(ec2_e1, 'sgManu1'))
+print("___")
+time.sleep(20)
+print(postgres_SGroupID)
+print(django_SGroupID)
+
+
+print("Atualizando regras")
+updateSecurityGroupRules(ec2_e2, 'sgManu2' , 22)
+updateSecurityGroupRules(ec2_e2, 'sgManu2' , 5432)
+updateSecurityGroupRules(ec2_e2, 'sgManu2' , 8080)
+updateSecurityGroupRules(ec2_e2, 'sgManu2' , 80)
+print("___")
+updateSecurityGroupRules(ec2_e1, 'sgManu1' , 22)
+updateSecurityGroupRules(ec2_e1, 'sgManu1' , 5432)
+updateSecurityGroupRules(ec2_e1, 'sgManu1' , 8080)
+updateSecurityGroupRules(ec2_e1, 'sgManu1' , 80)
+
 
 # Getting ubuntu_20 AMI id 
-AMI_ID_ubuntu_20 = (getAMIid(ec2_e1, ubuntu_AMI_name))
+AMI_ID_ubuntu_20_e1 = (getAMIid(ec2_e1, ubuntu_AMI_name))
+AMI_ID_ubuntu_20_e2 = (getAMIid(ec2_e2, ubuntu_AMI_name))
 
-
-print("POSTGRES")
-# Creating a Security Group
-postgres_SGroupID = (createSecurityGroup(ec2_e1, 'sgManu'))
-# django_SGroupID = (createSecurityGroup(ec2_e2, 'sgManu'))
-time.sleep(10)
-print(postgres_SGroupID)
-
-
+print("___POSTGRES___")
 # Creating an instance 
-postgres_instanceId = createInstance(AMI_ID_ubuntu_20, ec2_e1, 'PostgresManu ', 'sgManu', postgres_script)
-waiterInstance(ec2_e1, postgres_instanceId)
+postgres_instanceId = createInstance(AMI_ID_ubuntu_20_e2, ec2_e2, 'PostgresManu ', 'sgManu2', postgres_script)
+waiterInstance(ec2_e2, postgres_instanceId)
 
-PublicIpAddress = getPublicIpAddress(ec2_e1, postgres_instanceId)
+PublicIpAddress = getPublicIpAddress(ec2_e2, postgres_instanceId)
 
 print("PublicIpAddress {}".format(PublicIpAddress))
 
-updateSecurityGroupRules(ec2_e1, postgres_SGroupID, 22)
-updateSecurityGroupRules(ec2_e1, postgres_SGroupID, 5432)
-updateSecurityGroupRules(ec2_e1, postgres_SGroupID, 8080)
 
 
-print("DJANGO")
+print("___DJANGO___")
 django_script = (django_script(PublicIpAddress))
 
-django_instanceId = createInstance(AMI_ID_ubuntu_20, ec2_e1, 'DjangoManu ', 'sgManu', django_script)
+django_instanceId = createInstance(AMI_ID_ubuntu_20_e1, ec2_e1, 'DjangoManu ', 'sgManu1', django_script)
 waiterInstance(ec2_e1, django_instanceId)
 
 
 # Creating load balancer
-createLoadBalancer(elb_e1, 'lbManu', 80, 8080, subnets_e1, postgres_SGroupID )
+createLoadBalancer(elb_e1, 'lbManu', 8080, 8080, subnets_e1, django_SGroupID )
 
 createAutoScaling(as_e1, 'AutoScalingManu', django_instanceId, 'lbManu')
-
-
 
 
 
