@@ -27,9 +27,6 @@ sudo systemctl restart postgresql
 
 """
 
-
-
-
 def django_script(ip):
 
     return ( """#!/bin/bash
