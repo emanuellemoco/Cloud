@@ -116,9 +116,9 @@ def terminateInstances(ec2):
                 for tags in intance["Tags"]:
                     if (tags["Key"] == "Creator"):
                         if (tags["Value"] == "manu"):
-                            print(Color.F_LightRed,"Instancia terminada",Color.F_Default)
                             instanceId = (intance["InstanceId"])
                             response = ec2.terminate_instances(InstanceIds=[instanceId])
+                            print(Color.F_LightRed,"Instancia terminada",Color.F_Default)
                             waiter = ec2.get_waiter('instance_terminated')
                             waiter.wait(InstanceIds=[instanceId])
                             
@@ -245,7 +245,7 @@ print(Color.F_LightMagenta,"POSTGRES",Color.F_Default)
 postgres_instanceId = createInstance(AMI_ID_ubuntu_20_e2, ec2_e2, 'PostgresManu ', 'sgManu2', postgres_script)
 waiterInstance(ec2_e2, postgres_instanceId)
 PublicIpAddress = getPublicIpAddress(ec2_e2, postgres_instanceId)
-# print("Postgres PublicIpAddress {}".format(PublicIpAddress))
+print("Postgres PublicIpAddress {}".format(PublicIpAddress))
 
 print(Color.F_LightMagenta,"DJANGO",Color.F_Default)
 django_script = (django_script(PublicIpAddress))
@@ -262,6 +262,14 @@ print(Color.F_LightCyan,"Load Balancer DNS: {}".format(dnsName),Color.F_Default)
 
 print(Color.F_LightCyan,"http://{}:8080/admin/".format(dnsName),Color.F_Default)
 
+print(Color.F_LightCyan,"http://{}:8080/tasks/ to see all the tasks".format(dnsName),Color.F_Default)
+
+
 
 print(Color.F_White,"__________FIM__________",Color.F_Default)
 
+
+
+f = open("lbdns.txt", "w")
+f.write("http://{}:8080/".format(dnsName))
+f.close()

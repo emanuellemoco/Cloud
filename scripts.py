@@ -38,7 +38,7 @@ def django_script(ip):
     cd /home/ubuntu
 
     echo "--- Cloning "
-    git clone https://github.com/raulikeda/tasks
+    git clone https://github.com/emanuellemoco/tasks
     cd tasks/portfolio
 
     sed -i 's/node1/{0}/g' settings.py 
@@ -52,4 +52,5 @@ def django_script(ip):
     sudo reboot 
     
     """ ).format(ip)
+
 
